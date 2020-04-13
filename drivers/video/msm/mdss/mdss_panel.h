@@ -1,4 +1,5 @@
 /* Copyright (c) 2008-2014, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2013 Sony Mobile Communications AB.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -353,17 +354,29 @@ struct mdss_panel_info {
 
 	struct mdss_mdp_pp_tear_check te;
 
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	/* physical size in mm */
+	__u32 width;
+	__u32 height;
+#endif
+
 	struct lcd_panel_info lcdc;
 	struct fbc_panel_info fbc;
 	struct mipi_panel_info mipi;
 	struct lvds_panel_info lvds;
 	struct edp_panel_info edp;
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	const char *panel_id_name;
+#endif
 };
 
 struct mdss_panel_data {
 	struct mdss_panel_info panel_info;
 	void (*set_backlight) (struct mdss_panel_data *pdata, u32 bl_level);
 	unsigned char *mmss_cc_base;
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	struct platform_device *panel_pdev;
+#endif
 
 	/**
 	 * event_handler() - callback handler for MDP core events
@@ -378,6 +391,10 @@ struct mdss_panel_data {
 	 * and teardown.
 	 */
 	int (*event_handler) (struct mdss_panel_data *pdata, int e, void *arg);
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	int (*detect) (struct mdss_panel_data *pdata);
+	int (*update_panel) (struct mdss_panel_data *pdata);
+#endif
 
 	struct mdss_panel_data *next;
 };
@@ -454,6 +471,11 @@ static inline int mdss_panel_get_htotal(struct mdss_panel_info *pinfo)
 int mdss_register_panel(struct platform_device *pdev,
 	struct mdss_panel_data *pdata);
 
+#ifdef CONFIG_MACH_SONY_TIANCHI
+struct msm_fb_data_type;
+void mipi_dsi_panel_create_debugfs(struct msm_fb_data_type *mfd);
+void mipi_dsi_panel_remove_debugfs(struct msm_fb_data_type *mfd);
+#endif
 /**
  * mdss_panel_intf_type: - checks if a given intf type is primary
  * @intf_val: panel interface type of the individual controller
