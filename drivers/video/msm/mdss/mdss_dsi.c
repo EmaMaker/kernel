@@ -1,4 +1,5 @@
 /* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2013 Sony Mobile Communications AB.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -47,6 +48,7 @@ static int mdss_dsi_regulator_init(struct platform_device *pdev)
 			ctrl_pdata->power_data.num_vreg, 1);
 }
 
+#ifndef CONFIG_MACH_SONY_TIANCHI
 static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 {
 	int ret;
@@ -105,6 +107,7 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 error:
 	return ret;
 }
+#endif
 
 static void mdss_dsi_put_dt_vreg_data(struct device *dev,
 	struct dss_module_power *module_power)
@@ -335,7 +338,11 @@ static int mdss_dsi_off(struct mdss_panel_data *pdata)
 
 	mdss_dsi_clk_ctrl(ctrl_pdata, DSI_ALL_CLKS, 0);
 
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	ret = ctrl_pdata->spec_pdata->panel_power_on(pdata, 0);
+#else
 	ret = mdss_dsi_panel_power_on(pdata, 0);
+#endif	/* CONFIG_MACH_SONY_TIANCHI */
 	if (ret) {
 		mutex_unlock(&ctrl_pdata->mutex);
 		pr_err("%s: Panel power off failed\n", __func__);
@@ -679,8 +686,11 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 
 	pinfo = &pdata->panel_info;
 	mipi = &pdata->panel_info.mipi;
-
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	ret = ctrl_pdata->spec_pdata->panel_power_on(pdata, 1);
+#else
 	ret = mdss_dsi_panel_power_on(pdata, 1);
+#endif
 	if (ret) {
 		pr_err("%s:Panel power on failed. rc=%d\n", __func__, ret);
 		return ret;
@@ -690,7 +700,11 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 	if (ret) {
 		pr_err("%s: failed to enable bus clocks. rc=%d\n", __func__,
 			ret);
+#ifdef CONFIG_MACH_SONY_TIANCHI
+		ret = ctrl_pdata->spec_pdata->panel_power_on(pdata, 0);
+#else
 		ret = mdss_dsi_panel_power_on(pdata, 0);
+#endif
 		if (ret) {
 			pr_err("%s: Panel reset failed. rc=%d\n",
 					__func__, ret);
@@ -1035,6 +1049,11 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		ctrl_pdata->ctrl_state |= CTRL_STATE_MDP_ACTIVE;
 		if (ctrl_pdata->on_cmds.link_state == DSI_HS_MODE)
 			rc = mdss_dsi_unblank(pdata);
+#ifdef CONFIG_MACH_SONY_TIANCHI
+		if (ctrl_pdata->spec_pdata->disp_on_in_hs
+			&& ctrl_pdata->spec_pdata->disp_on)
+			rc = ctrl_pdata->spec_pdata->disp_on(pdata);
+#endif
 		break;
 	case MDSS_EVENT_BLANK:
 		if (ctrl_pdata->off_cmds.link_state == DSI_HS_MODE)
@@ -1122,6 +1141,11 @@ static struct device_node *mdss_dsi_pref_prim_panel(
  *
  * returns pointer to panel node on success, NULL on error.
  */
+
+#ifdef CONFIG_MACH_SONY_FLAMINGO
+#define TEMP_BUF_LEN		14
+char temp_buf[TEMP_BUF_LEN]={0};
+#endif
 static struct device_node *mdss_dsi_find_panel_of_node(
 		struct platform_device *pdev, char *panel_cfg)
 {
@@ -1157,6 +1181,9 @@ static struct device_node *mdss_dsi_find_panel_of_node(
 				panel_name[i] = *(stream + i);
 			panel_name[i] = 0;
 		}
+#ifdef CONFIG_MACH_SONY_FLAMINGO
+		strlcpy(temp_buf, (panel_name+14), TEMP_BUF_LEN);
+#endif
 
 		pr_debug("%s:%d:%s:%s\n", __func__, __LINE__,
 			 panel_cfg, panel_name);
@@ -1183,6 +1210,14 @@ end:
 
 	return dsi_pan_node;
 }
+
+#ifdef CONFIG_MACH_SONY_FLAMINGO
+void mdss_get_panel_name(char *StrBuff)
+{
+	strlcpy(StrBuff, temp_buf, TEMP_BUF_LEN);
+}
+EXPORT_SYMBOL(mdss_get_panel_name);
+#endif
 
 static int __devinit mdss_dsi_ctrl_probe(struct platform_device *pdev)
 {
@@ -1215,6 +1250,17 @@ static int __devinit mdss_dsi_ctrl_probe(struct platform_device *pdev)
 			rc = -ENOMEM;
 			goto error_no_mem;
 		}
+#ifdef CONFIG_MACH_SONY_TIANCHI
+		ctrl_pdata->spec_pdata = devm_kzalloc(&pdev->dev,
+			sizeof(struct mdss_panel_specific_pdata),
+			GFP_KERNEL);
+		if (!ctrl_pdata->spec_pdata) {
+			pr_err("%s: FAILED: cannot alloc spec pdata\n",
+				__func__);
+			rc = -ENOMEM;
+			goto error_no_mem;
+		}
+#endif
 		platform_set_drvdata(pdev, ctrl_pdata);
 	}
 
@@ -1294,6 +1340,9 @@ error_pan_node:
 error_vreg:
 	mdss_dsi_put_dt_vreg_data(&pdev->dev, &ctrl_pdata->power_data);
 error_no_mem:
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	devm_kfree(&pdev->dev, ctrl_pdata->spec_pdata);
+#endif
 	devm_kfree(&pdev->dev, ctrl_pdata);
 
 	return rc;
@@ -1320,6 +1369,59 @@ static int __devexit mdss_dsi_ctrl_remove(struct platform_device *pdev)
 	msm_dss_iounmap(&ctrl_pdata->ctrl_io);
 	return 0;
 }
+
+#ifdef CONFIG_MACH_SONY_TIANCHI
+int mdss_dsi_panel_power_detect(struct platform_device *pdev, int enable)
+{
+	int ret;
+	static struct regulator *vddio_vreg;
+
+	if (!vddio_vreg) {
+
+		vddio_vreg = devm_regulator_get(&pdev->dev, "vddio");
+		if (IS_ERR(vddio_vreg)) {
+			pr_err("could not get 8941_lvs3, rc = %ld\n",
+					PTR_ERR(vddio_vreg));
+			return -ENODEV;
+		}
+	}
+
+	if (enable) {
+		ret = regulator_set_optimum_mode(vddio_vreg, 100000);
+		if (ret < 0) {
+			pr_err("%s: vdd_vreg set regulator mode failed.\n",
+						       __func__);
+			return ret;
+		}
+
+		ret = regulator_enable(vddio_vreg);
+		if (ret) {
+			pr_err("%s: Failed to enable regulator.\n", __func__);
+			return ret;
+		}
+
+		msleep(50);
+		wmb();
+	} else {
+		ret = regulator_disable(vddio_vreg);
+		if (ret) {
+			pr_err("%s: Failed to disable regulator.\n", __func__);
+			return ret;
+		}
+
+		ret = regulator_set_optimum_mode(vddio_vreg, 100);
+		if (ret < 0) {
+			pr_err("%s: vdd_vreg set regulator mode failed.\n",
+						       __func__);
+			return ret;
+		}
+
+		usleep_range(9000, 10000);
+		devm_regulator_put(vddio_vreg);
+	}
+	return 0;
+}
+#endif	/* CONFIG_MACH_SONY_TIANCHI */
 
 struct device dsi_dev;
 
@@ -1395,6 +1497,15 @@ int dsi_panel_device_register(struct device_node *pan_node,
 	struct platform_device *ctrl_pdev = NULL;
 	const char *data;
 	struct mdss_panel_info *pinfo = &(ctrl_pdata->panel_data.panel_info);
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	struct mdss_panel_specific_pdata *spec_pdata = NULL;
+
+	spec_pdata = ctrl_pdata->spec_pdata;
+	if (!spec_pdata) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return -EINVAL;
+	}
+#endif
 
 	mipi  = &(pinfo->mipi);
 
@@ -1482,6 +1593,53 @@ int dsi_panel_device_register(struct device_node *pan_node,
 		pr_err("%s:%d, Disp_en gpio not specified\n",
 						__func__, __LINE__);
 
+#ifdef CONFIG_MACH_SONY_SEAGULL
+	ctrl_pdata->disp_p5_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
+		"qcom,platform-p5-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->disp_p5_gpio)) {
+		printk("%s:%d, Disp_p5 gpio not specified\n",
+						__func__, __LINE__);
+	} else {
+		rc = gpio_request(ctrl_pdata->disp_p5_gpio, "disp_p5");
+		if (rc) {
+			printk("request p5 gpio failed, rc=%d\n",
+				   rc);
+			gpio_free(ctrl_pdata->disp_p5_gpio);
+			return -ENODEV;
+		}
+		rc = gpio_tlmm_config(GPIO_CFG(
+				ctrl_pdata->disp_p5_gpio, 0,
+				GPIO_CFG_OUTPUT,
+				GPIO_CFG_PULL_DOWN,
+				GPIO_CFG_2MA),
+				GPIO_CFG_ENABLE);
+		if (rc)
+			printk("[DISPLAY]%s: gpio %d fail, rc %d\n", __func__, ctrl_pdata->disp_p5_gpio, rc);
+	}
+
+	ctrl_pdata->disp_n5_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
+		"qcom,platform-n5-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->disp_n5_gpio)) {
+		printk("%s:%d, Disp_n5 gpio not specified\n",
+						__func__, __LINE__);
+	} else {
+		rc = gpio_request(ctrl_pdata->disp_n5_gpio, "disp_n5");
+		if (rc) {
+			printk("request n5 gpio failed, rc=%d\n",
+				   rc);
+			gpio_free(ctrl_pdata->disp_n5_gpio);
+			return -ENODEV;
+		}
+		rc = gpio_tlmm_config(GPIO_CFG(
+				ctrl_pdata->disp_n5_gpio, 0,
+				GPIO_CFG_OUTPUT,
+				GPIO_CFG_PULL_DOWN,
+				GPIO_CFG_2MA),
+				GPIO_CFG_ENABLE);
+		if (rc)
+			printk("[DISPLAY]%s: gpio %d fail, rc %d\n", __func__, ctrl_pdata->disp_n5_gpio, rc);
+	}
+#endif
 	if (pinfo->type == MIPI_CMD_PANEL) {
 		ctrl_pdata->disp_te_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
 						"qcom,platform-te-gpio", 0);
@@ -1555,7 +1713,16 @@ int dsi_panel_device_register(struct device_node *pan_node,
 	}
 
 	ctrl_pdata->panel_data.event_handler = mdss_dsi_event_handler;
-
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	ctrl_pdata->panel_data.detect = spec_pdata->detect;
+	ctrl_pdata->panel_data.update_panel = spec_pdata->update_panel;
+	ctrl_pdata->panel_data.panel_pdev = ctrl_pdev;
+	ctrl_pdata->cabc_off_cmds = spec_pdata->cabc_off_cmds;
+	ctrl_pdata->spec_pdata->disp_on_in_hs = spec_pdata->disp_on_in_hs;
+	ctrl_pdata->spec_pdata->cabc_enabled = spec_pdata->cabc_enabled;
+	ctrl_pdata->on_cmds = spec_pdata->on_cmds;
+	ctrl_pdata->off_cmds = spec_pdata->off_cmds;
+#endif
 	if (ctrl_pdata->status_mode == ESD_REG)
 		ctrl_pdata->check_status = mdss_dsi_reg_status_check;
 	else if (ctrl_pdata->status_mode == ESD_BTA)
@@ -1582,7 +1749,12 @@ int dsi_panel_device_register(struct device_node *pan_node,
 
 	if (pinfo->cont_splash_enabled) {
 		pinfo->panel_power_on = 1;
+#ifdef CONFIG_MACH_SONY_TIANCHI
+		rc = ctrl_pdata->spec_pdata->panel_power_on(
+			&(ctrl_pdata->panel_data), 1);
+#else
 		rc = mdss_dsi_panel_power_on(&(ctrl_pdata->panel_data), 1);
+#endif
 		if (rc) {
 			pr_err("%s: Panel power on failed\n", __func__);
 			return rc;

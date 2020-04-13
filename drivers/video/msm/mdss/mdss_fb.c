@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2007 Google Incorporated
  * Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2013 Sony Mobile Communications AB.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -54,6 +55,11 @@
 
 #include "mdss_fb.h"
 #include "mdss_mdp_splash_logo.h"
+#ifdef CONFIG_MACH_SONY_TIANCHI
+#include "mdss_mdp.h"
+#include "mdss_dsi.h"
+#include <linux/gpio.h> 
+#endif
 
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MDSS_FB_NUM 3
@@ -254,6 +260,9 @@ static struct led_classdev backlight_led = {
 	.name           = "lcd-backlight",
 	.brightness     = MDSS_MAX_BL_BRIGHTNESS,
 	.brightness_set = mdss_fb_set_bl_brightness,
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	.max_brightness = MDSS_MAX_BL_BRIGHTNESS,
+#endif
 };
 
 static ssize_t mdss_fb_get_type(struct device *dev,
@@ -511,6 +520,23 @@ static int mdss_fb_lpm_enable(struct msm_fb_data_type *mfd, int mode)
 	return 0;
 }
 
+#ifdef CONFIG_MACH_SONY_FLAMINGO
+#define LCM_ID_PIN	27
+extern char temp_buf[];		
+static ssize_t mdss_fb_lcm_module_id(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	ssize_t ret = 0;
+
+	if (*temp_buf != '\0')
+		ret = snprintf(buf, PAGE_SIZE, temp_buf);
+	else
+		ret = snprintf(buf, PAGE_SIZE, "TRULY\n");
+
+	return ret;
+}
+#endif
+
 static DEVICE_ATTR(msm_fb_type, S_IRUGO, mdss_fb_get_type, NULL);
 static DEVICE_ATTR(msm_fb_split, S_IRUGO, mdss_fb_get_split, NULL);
 static DEVICE_ATTR(show_blank_event, S_IRUGO, mdss_mdp_show_blank_event, NULL);
@@ -518,6 +544,9 @@ static DEVICE_ATTR(idle_time, S_IRUGO | S_IWUSR | S_IWGRP,
 	mdss_fb_get_idle_time, mdss_fb_set_idle_time);
 static DEVICE_ATTR(idle_notify, S_IRUGO, mdss_fb_get_idle_notify, NULL);
 static DEVICE_ATTR(msm_fb_panel_info, S_IRUGO, mdss_fb_get_panel_info, NULL);
+#ifdef CONFIG_MACH_SONY_FLAMINGO
+static DEVICE_ATTR(lcm_module_id, S_IRUGO, mdss_fb_lcm_module_id, NULL);
+#endif
 
 static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_type.attr,
@@ -526,6 +555,9 @@ static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_idle_time.attr,
 	&dev_attr_idle_notify.attr,
 	&dev_attr_msm_fb_panel_info.attr,
+#ifdef CONFIG_MACH_SONY_FLAMINGO
+	&dev_attr_lcm_module_id.attr,
+#endif
 	NULL,
 };
 
@@ -661,7 +693,39 @@ static int mdss_fb_probe(struct platform_device *pdev)
 
 	if (mfd->mdp.splash_init_fnc)
 		mfd->mdp.splash_init_fnc(mfd);
+    
+#if defined(CONFIG_DEBUG_FS) && defined(CONFIG_MACH_SONY_TIANCHI)
+	if ((mfd->panel_info->type == MIPI_VIDEO_PANEL) ||
+		(mfd->panel_info->type == MIPI_CMD_PANEL))
+		mipi_dsi_panel_create_debugfs(mfd);
+#endif
 
+#ifdef CONFIG_MACH_SONY_TIANCHI
+	if (mfd->index == 0) {
+		struct mdss_dsi_ctrl_pdata *ctrl_pdata;
+
+		ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+			panel_data);
+		if (!ctrl_pdata) {
+			pr_err("%s: Invalid input data\n", __func__);
+			return -EINVAL;
+		}
+		if (ctrl_pdata->spec_pdata) {
+			if (ctrl_pdata->spec_pdata->panel_detect) {
+				mdss_fb_blank_sub(FB_BLANK_UNBLANK, mfd->fbi,
+					mfd->op_enable);
+				if (pdata->detect)
+					pdata->detect(pdata);
+				mdss_fb_blank_sub(FB_BLANK_POWERDOWN, mfd->fbi,
+					mfd->op_enable);
+				if (pdata->update_panel)
+					pdata->update_panel(pdata);
+			} else {
+				ctrl_pdata->spec_pdata->detected = true;
+			}
+		}
+	}
+#endif
 	INIT_DELAYED_WORK(&mfd->idle_notify_work, __mdss_fb_idle_notify_work);
 
 	return rc;
@@ -702,6 +766,12 @@ static int mdss_fb_remove(struct platform_device *pdev)
 
 	if (mfd->key != MFD_KEY)
 		return -EINVAL;
+
+#if defined(CONFIG_DEBUG_FS) && defined(CONFIG_MACH_SONY_TIANCHI)
+	if ((mfd->panel_info->type == MIPI_VIDEO_PANEL) ||
+		(mfd->panel_info->type == MIPI_CMD_PANEL))
+		mipi_dsi_panel_remove_debugfs(mfd);
+#endif
 
 	if (mdss_fb_suspend_sub(mfd))
 		pr_err("msm_fb_remove: can't stop the device %d\n",
@@ -2243,6 +2313,9 @@ static int __mdss_fb_perform_commit(struct msm_fb_data_type *mfd)
 		else
 			pr_warn("no kickoff function setup for fb%d\n",
 					mfd->index);
+#ifdef CONFIG_MACH_SONY_TIANCHI
+		mdss_dsi_panel_fps_data_update(mfd);
+#endif
 	} else {
 		ret = mdss_fb_pan_display_sub(&fb_backup->disp_commit.var,
 				&fb_backup->info);
@@ -2255,6 +2328,9 @@ static int __mdss_fb_perform_commit(struct msm_fb_data_type *mfd)
 	if (!ret)
 		mdss_fb_update_backlight(mfd);
 
+#ifdef CONFIG_MACH_SONY_TIANCHI
+		mdss_dsi_panel_fps_data_update(mfd);
+#endif
 	if (IS_ERR_VALUE(ret) || !sync_pt_data->flushed)
 		mdss_fb_signal_timeline(sync_pt_data);
 
