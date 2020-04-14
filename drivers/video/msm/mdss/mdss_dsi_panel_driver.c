@@ -1903,3 +1903,13 @@ error_attr:
 	device_unregister(&virtdev);
 	return rc;
 }
+int mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable)
+ {
+ 	return mdss_dsi_panel_reset_panel(pdata, enable);
+ }
+ 
+ int mdss_panel_get_dst_fmt(u32 bpp, char mipi_mode, u32 pixel_packing,
+				char *dst_format)
+ {
+ 	return mdss_panel_dt_get_dst_fmt(bpp, mipi_mode, pixel_packing, dst_format);
+ }
